@@ -1,23 +1,21 @@
+#input files, DTU server
 bamFls = list.files(path="../../../Lars/Thais/results/2013-10-06/",pattern=".bam$",full.names=TRUE)
-
+#annotation files, DTU server
 bedFls = list.files(path="../F1_sperm/annotation/",pattern="rn",full.names=TRUE)
-  
+#counting  
 source("../../scripts/dataAnalysis/snowCount.r")
-
 data = snowCount(bamFls,bedFls,cpus=3)
   
-
+#get annotation
+#ensembl
 gene.anno <- import("../F1_sperm/annotation/rn4.gtf")
-
+#miRBase
 miRNA.anno<- import("../F1_sperm/annotation/rno2.gff3")
-
-
-
 #piRNA database http://www.ibab.ac.in/pirna/Rat.tar.gz
 piRNA.anno<-  import("../F1_sperm/annotation/rn4_piRNA.gtf")
 
 
-#tiRNA
+#tRFs
 library(Rsamtools)
 library(rtracklayer)
 library(AnnotationHub)
