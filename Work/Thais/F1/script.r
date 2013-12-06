@@ -1,28 +1,22 @@
+#This is Thais Rat sperm F1 sRNA-seq data
+#working path
+#larsroed@padawan.cbs.dtu.dk:/home/people/larsroed/projects/Kui/Thais/F1_sperm
+#input files, DTU server
 bamFls = list.files(path="./data/2013-10-18/",pattern=".bam$",full.names=TRUE)
+#annotation files, DTU server
+#check the chromosome name are the same as bam file head
 bedFls = list.files(path="./annotation/",pattern="rn",full.names=TRUE)
-
 source("scripts/dataAnalysis/snowCount.r")
-
 data = snowCount(bamFls,bedFls,cpus=3)
 
+#get annotation
+#ensembl
 #Rattus_norvegicus.RGSC3.4.69.gtf.gz
 gene.anno <- import("annotation/rn4.gtf")
 #miRbase  v20
 miRNA.anno<- import("annotation/rno2.gff3")
-
-
 #piRNA database http://www.ibab.ac.in/pirna/Rat.tar.gz
 piRNA.anno<-  import("annotation/rn4_piRNA.gtf")
-
-
-#tiRNA
-library(Rsamtools)
-library(rtracklayer)
-library(AnnotationHub)
-hub <- AnnotationHub()
-filters(hub) <- list(Species="Rattus norvegicus")  
-tRNA<-hub$goldenpath.rn4.database.tRNAs_0.0.1.RData
-# tRNA.count<- summarizeOverlaps(tRNA,BamFileList(bamFls, index=character()))
 
 #Tandem Repeats Finder
 trf<-hub$goldenpath.rn4.database.simpleRepeat_0.0.1.RData
@@ -31,7 +25,28 @@ trf.count<- summarizeOverlaps(trf,BamFileList(bamFls, index=character()))
 #from ucsc
 repeatmask<- import("annotation/rn4_repeatmasker.bed")
 
+library(Rsamtools)
+#keep all alignment into a list of GRanges
+aln<-list()
+for (i in 1:length(bamFls)) aln<-c(aln,granges(readGAlignmentsFromBam(bamFls[i])))
+save(aln,file="align.RData")
 
+library(rtracklayer)
+library(BSgenome.Rnorvegicus.UCSC.rn4)
+
+#following code is executed in iMac xpm526@sund-it-mac-4:/Users/xpm526/Work/Thais/F0
+#get tRNA annotation
+#becareful about the order of this vs the one from UCSC, make sure the tRNA ID be consistent
+
+#tiRNA
+library(AnnotationHub)
+hub <- AnnotationHub()
+filters(hub) <- list(Species="Rattus norvegicus")  
+tRNA<-hub$goldenpath.rn4.database.tRNAs_0.0.1.RData
+# tRNA.count<- summarizeOverlaps(tRNA,BamFileList(bamFls, index=character()))
+
+
+#vis % of data
 boxplot( sapply(data$counts, colSums) *100/data$reads)
 
 #ensem<-split(data$counts$rn4_repeatmasker.bed, as.factor(elementMetadata(repeatmask)[,1]))
@@ -47,10 +62,6 @@ grp <- factor(pd[,4])
 design <- model.matrix(~0+grp)
 colnames(design)<-levels(grp)
 filter<-T
-
-library(Rsamtools)
-aln<-list()
-for (i in 1:length(bamFls)) aln<-c(aln,granges(readGAlignmentsFromBam(bamFls[i])))
 
 
 #miRNA DE

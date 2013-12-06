@@ -1,5 +1,6 @@
-
-#
+#This is Thais Rat sperm F0 and F1 sRNA-seq data temp comparsion
+#working path
+#xpm526@sund-it-mac-4:/Users/xpm526/Work/Thais/
 #set dir
 setwd("../Thais/")
 load("F0/countData.RData")

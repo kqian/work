@@ -1,6 +1,10 @@
+#This is Thais Rat sperm F0 sRNA-seq data
+#working path
+#larsroed@padawan.cbs.dtu.dk:/home/people/larsroed/projects/Kui/Thais/F0_sperm 
 #input files, DTU server
 bamFls = list.files(path="../../../Lars/Thais/results/2013-10-06/",pattern=".bam$",full.names=TRUE)
 #annotation files, DTU server
+#check the chromosome name are the same as bam file head
 bedFls = list.files(path="../F1_sperm/annotation/",pattern="rn",full.names=TRUE)
 #counting  
 source("../../scripts/dataAnalysis/snowCount.r")
@@ -9,54 +13,67 @@ data = snowCount(bamFls,bedFls,cpus=3)
 #get annotation
 #ensembl
 gene.anno <- import("../F1_sperm/annotation/rn4.gtf")
-#miRBase
+#miRBase v20
 miRNA.anno<- import("../F1_sperm/annotation/rno2.gff3")
 #piRNA database http://www.ibab.ac.in/pirna/Rat.tar.gz
 piRNA.anno<-  import("../F1_sperm/annotation/rn4_piRNA.gtf")
 
+#Tandem Repeats Finder
+trf<-hub$goldenpath.rn4.database.simpleRepeat_0.0.1.RData
+trf.count<- summarizeOverlaps(trf,BamFileList(bamFls, index=character()))
+#Repeatmasker
+#from ucsc Table 
+repeatmask<- import("../F1_sperm/annotation/rn4_repeatmasker.bed")
 
-#tRFs
 library(Rsamtools)
+#keep all alignment into a list of GRanges
+aln<-list()
+for (i in 1:length(bamFls)) aln<-c(aln,granges(readGAlignmentsFromBam(bamFls[i])))
+save(aln,file="aln.RData")
+
 library(rtracklayer)
+library(BSgenome.Rnorvegicus.UCSC.rn4)
+
+#following code is executed in iMac xpm526@sund-it-mac-4:/Users/xpm526/Work/Thais/F0
+#get tRNA annotation
+#becareful about the order of this vs the one from UCSC, make sure the tRNA ID be consistent
 library(AnnotationHub)
 hub <- AnnotationHub()
 filters(hub) <- list(Species="Rattus norvegicus")  
 tRNA<-hub$goldenpath.rn4.database.tRNAs_0.0.1.RData
 # tRNA.count<- summarizeOverlaps(tRNA,BamFileList(bamFls, index=character()))
 
-#Tandem Repeats Finder
-trf<-hub$goldenpath.rn4.database.simpleRepeat_0.0.1.RData
-trf.count<- summarizeOverlaps(trf,BamFileList(bamFls, index=character()))
-#Repeatmasker
-#from ucsc
-repeatmask<- import("../F1_sperm/annotation/rn4_repeatmasker.bed")
-library(rtracklayer)
-
+#miRNA ID as rowname
 elementMetadata(miRNA.anno)[,5]->rownames(data$counts$rno2.gff3)
-
+#phenotype 
 pd<-read.table(file="./expSpec.txt",sep="\t",header=T,stringsAsFactors=F)
+#check the order, should be same as .bam file input
 pd<-pd[c(1,8,2:7,9,18,10:17),]
 #miRNA DE
 count.miRNA<-data$counts$rno2.gff3[which(elementMetadata(miRNA.anno)[,2]=="miRNA"),]
-f0.miRNA<-de.edgeR(count.miRNA,grp,"F0_miRNA_hfat_vs_ctrl_Trend_Filter.csv","ctrl","hfat",F,T)
+f0.miRNA<-de.edgeR(count.miRNA,grp,"f0.miRNA.hfatvsctrl","ctrl","hfat",F,T)
+#get the sequence
 f0.miRNA.seq<-fetch.region(aln,f0.miRNA,miRNA.anno)
+write.csv(cbind(f0.miRNA[,1:8],f0.miRNA.seq,f0.miRNA[,9:27]),"f0.miRNA_seq.csv")
 
 #piRNA DE
 count.piRNA<-data$counts$rn4_piRNA.gtf
+#give location info in the rownames
 rownames(count.piRNA) <- paste(elementMetadata(piRNA.anno)[,5],seqnames(piRNA.anno),start(piRNA.anno),end(piRNA.anno),strand(piRNA.anno),sep=";")
 F0.piRNA <- de.edgeR.pi(count.piRNA,grp,"F0_piRNA_hfat_vs_ctrl_Trend_Filter.csv","ctrl","hfat",F,T)
 
 #get seq
-library(BSgenome.Rnorvegicus.UCSC.rn4)
+#build an anno same as rownames
 piRNA.anno2<-piRNA.anno
 elementMetadata(piRNA.anno2)[,5]<-paste(elementMetadata(piRNA.anno)[,5],seqnames(piRNA.anno),start(piRNA.anno),end(piRNA.anno),strand(piRNA.anno),sep=";")
 F0_hfat_vs_ctrl.piRNA.seq<-fetch.region.pi(aln,F0.piRNA,piRNA.anno2)
 write.csv(cbind(F0.piRNA[,1:4],F0_hfat_vs_ctrl.piRNA.seq,F0.piRNA[,5:22]),"F0_piRNA_hfat_vs_ctrl_seq.csv")
 
-#DE tiRNA
+#DE tRFs/tiRNA
 count.tRNA<-data$counts$rn4_tRNA.bed
 #check the order first, make sure the name are same
 rownames(count.tRNA) <- elementMetadata(tRNA)[,1]
+#build new tiRNA anno by seperate know tRNA to 3 region: 5'(25nt)/ M /3'(25nt) 
 tRNA.5<-resize(tRNA,width=25)
 tRNA.3<-resize(tRNA,width=25,fix="end")
 tRNA.M<-narrow(tRNA,start=26,end=width(tRNA)-25)
@@ -64,7 +81,10 @@ elementMetadata(tRNA.5)[,1]<-paste(elementMetadata(tRNA.5)[,1],"5",sep=".")
 elementMetadata(tRNA.3)[,1]<-paste(elementMetadata(tRNA.3)[,1],"3",sep=".")
 elementMetadata(tRNA.M)[,1]<-paste(elementMetadata(tRNA.M)[,1],"M",sep=".")
 tiRNA.anno<-c(tRNA.5,tRNA.3,tRNA.M)
+#1332 = 444 *3
 count.tiRNA<-matrix(0,1332,18)
+#aln from aln.RData
+#only count reads with at least 10nt overlap
 for (i in 1:18) count.tiRNA[,i]<- countOverlaps(tiRNA.anno, aln[[i]], maxgap=0L, minoverlap=10L)
 colnames(count.tRNA)->colnames(count.tiRNA)
 rownames(count.tiRNA) <- elementMetadata(tiRNA.anno)[,1]
@@ -72,15 +92,15 @@ rownames(count.tiRNA) <- elementMetadata(tiRNA.anno)[,1]
 F0.tiRNA <- de.edgeR.pi(count.tiRNA,grp,"F0_tiRNA_hfat_vs_ctrl.csv","ctrl","hfat",F,T)
 F0.tiRNA.seq<-fetch.region.ti(aln,F0.tiRNA,tiRNA.anno)
 write.csv(cbind(F0.tiRNA[,1:4],F0.tiRNA.seq,F0.tiRNA[,5:22]),"F0_tiRNA_hfat_vs_ctrl_seq.csv")
+#try to find good contrl sRNA 
 
 #ggbio vis
+#just for check the reads, no plots saved
 library(ggbio)
-
 temp.anno<-piRNA.anno[which(elementMetadata(piRNA.anno)[,5]==strsplit(row.names(F0.piRNA)[1],";")[[1]][1])]
 temp.anno<-piRNA.anno[grep("DQ738740",elementMetadata(piRNA.anno)[,5])]
 temp.anno<-tiRNA.anno[grep(strsplit(row.names(F0.tiRNA)[19],"\\.")[[1]][2],elementMetadata(tiRNA.anno)[,1])]
 temp.anno<-tiRNA.anno[which(elementMetadata(tiRNA.anno)[,1]==row.names(F0.tiRNA)[19])]
-
 temp.anno<-miRNA.anno[which(elementMetadata(miRNA.anno)[,5]==row.names(f0.miRNA)[12])]
 
 for (i in 1:length(temp.anno)) {
@@ -96,14 +116,14 @@ p2<-autoplot(Rnorvegicus, which =reduce(temp))
 p3<-autoplot(Rnorvegicus, which =temp.anno)
 tracks(p1,p2,p3)
 
-autoplot(Rnorvegicus, which =temp.anno[1])
-
-
 sessionInfo()->sess.info
 save.image("countData.RData")
 
-write.csv(cbind(f0.miRNA[,1:8],f0.miRNA.seq,f0.miRNA[,9:27]),"f0.miRNA_seq.csv")
+#functions used
 #check reads anno distribution
+#fetch.region:miRNA
+#fetch.region.pi:piRNA
+#fetch.region.ti:tRFs/tiRNA
 fetch.region<-function(alignlist, result,anno) {
   seqa<-c()
   seqb<-c()
@@ -207,6 +227,8 @@ fetch.region.ti<-function(alignlist, result,anno) {
   }        
   return(cbind(seqa,seqb))
 }
+
+#wrap up functions for edgeR
 #0.05
 de.edgeR<-function (counts,group,output,conA,conB,Tagwise=T,filter=T) {
   library(edgeR)
@@ -247,7 +269,7 @@ de.edgeR<-function (counts,group,output,conA,conB,Tagwise=T,filter=T) {
   write.csv(result.tab,file=output)
   return(result.tab)
 }
-#0.05
+#0.05 NOTE: 0.01 for F1
 de.edgeR.pi<-function (counts,group,output,conA,conB,Tagwise=T,filter=T) {
   library(edgeR)
   library(GenomicRanges)
