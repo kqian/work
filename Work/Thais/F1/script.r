@@ -10,6 +10,7 @@ source("scripts/dataAnalysis/snowCount.r")
 data = snowCount(bamFls,bedFls,cpus=3)
 
 #get annotation
+library(rtracklayer)
 #ensembl
 #Rattus_norvegicus.RGSC3.4.69.gtf.gz
 gene.anno <- import("annotation/rn4.gtf")
@@ -24,6 +25,16 @@ trf.count<- summarizeOverlaps(trf,BamFileList(bamFls, index=character()))
 #Repeatmasker
 #from ucsc
 repeatmask<- import("annotation/rn4_repeatmasker.bed")
+
+#intron from refseq in ucsc
+intron<- import("annotation/rat_intron_refseq_ucsc.bed")
+
+
+#check how many reads without any annotation
+unanno<-gaps(c(reduce(gene.anno),reduce(miRNA.anno),reduce(piRNA.anno),reduce(trf),reduce(repeatmask),reduce(tRNA)))
+count.unRNA<-matrix(0,length(unanno),38)
+for (i in 1:38) count.unRNA[,i]<- countOverlaps(unanno, aln[[i]],type= "within")
+colSums(count.unRNA)/data$reads
 
 library(Rsamtools)
 #keep all alignment into a list of GRanges
@@ -44,6 +55,48 @@ hub <- AnnotationHub()
 filters(hub) <- list(Species="Rattus norvegicus")  
 tRNA<-hub$goldenpath.rn4.database.tRNAs_0.0.1.RData
 # tRNA.count<- summarizeOverlaps(tRNA,BamFileList(bamFls, index=character()))
+
+#count all sRNA loci without annotation
+sapply(aln,reduce)->aln.re
+for (i in 1:length(aln.re)) aln.re[[i]]<-aln.re[[i]][which(countOverlaps(aln.re[[i]],aln[[i]])>1)]
+aln.re2<-aln.re[[1]]
+for (i in 2:length(aln)) aln.re2<-c(aln.re2,aln.re[[i]])
+aln.re3<-reduce(aln.re2)
+rm(aln.re,aln.re2)
+
+count.all<-matrix(0,length(aln.re3),length(aln))
+for (i in 1:length(aln)) count.all[,i]<- countOverlaps(aln.re3, aln[[i]])
+
+dge <- DGEList(count.all, group=grp)
+keep<- rowSums(cpm(dge) > 1) >= (length(grp)/2)
+dge <- dge[keep,]
+dge <- calcNormFactors(dge)
+dge <- estimateGLMCommonDisp(dge, design)
+dge <- estimateGLMTrendedDisp(dge, design)
+dge <- estimateGLMTagwiseDisp(dge, design)
+fit <- glmFit(dge, design)
+
+aln.re4<-aln.re3[keep]
+#PHC_vs_PCC.csv
+lrt <- glmLRT(fit,contrast=c(-1,0,1,0))
+
+aln.re4[which(lrt$table$PValue<0.05)]->aln.re5
+lrt2<-lrt[which(lrt$table$PValue<0.05),]$table
+lrt2<-cbind(lrt2,countOverlaps(aln.re5,gene.anno))
+lrt2<-cbind(lrt2,countOverlaps(aln.re5,miRNA.anno))
+lrt2<-cbind(lrt2,countOverlaps(aln.re5,piRNA.anno))
+lrt2<-cbind(lrt2,countOverlaps(aln.re5,tRNA))
+lrt2<-cbind(lrt2,countOverlaps(aln.re5,trf))
+lrt2<-cbind(lrt2,countOverlaps(aln.re5,repeatmask))
+lrt2<-cbind(lrt2,countOverlaps(aln.re5,intron))
+lrt2<-cbind(lrt2,rowSums(lrt2[,5:11]))
+lrt2<-cbind(lrt2,width(aln.re5))
+count.all2<-count.all[keep,]
+paste(grp,sapply(strsplit(bamFls,"\\//"),tail,1),sep=".")->colnames(count.all2)
+count.all2<-count.all2[,order(colnames(count.all2))]
+
+lrt2<-cbind(lrt2,count.all2[which(lrt$table$PValue<0.05),])
+write.csv(lrt2,"F1_sRNA_PHC_vs_PCC_GLM.csv")
 
 
 #vis % of data

@@ -11,6 +11,7 @@ source("../../scripts/dataAnalysis/snowCount.r")
 data = snowCount(bamFls,bedFls,cpus=3)
   
 #get annotation
+library(rtracklayer)
 #ensembl
 gene.anno <- import("../F1_sperm/annotation/rn4.gtf")
 #miRBase v20
@@ -25,11 +26,58 @@ trf.count<- summarizeOverlaps(trf,BamFileList(bamFls, index=character()))
 #from ucsc Table 
 repeatmask<- import("../F1_sperm/annotation/rn4_repeatmasker.bed")
 
+#intron from refseq in ucsc
+intron<- import("../F1_sperm/annotation/rat_intron_refseq_ucsc.bed")
+
+
 library(Rsamtools)
 #keep all alignment into a list of GRanges
 aln<-list()
 for (i in 1:length(bamFls)) aln<-c(aln,granges(readGAlignmentsFromBam(bamFls[i])))
 save(aln,file="aln.RData")
+
+#count all sRNA loci without annotation
+sapply(aln,reduce)->aln.re
+for (i in 1:length(aln.re)) aln.re[[i]]<-aln.re[[i]][which(countOverlaps(aln.re[[i]],aln[[i]])>1)]
+aln.re2<-aln.re[[1]]
+for (i in 2:length(aln)) aln.re2<-c(aln.re2,aln.re[[i]])
+#GRanges for all count
+aln.re3<-reduce(aln.re2)
+rm(aln.re,aln.re2)
+count.all<-matrix(0,length(aln.re3),length(aln))
+for (i in 1:length(aln)) count.all[,i]<- countOverlaps(aln.re3, aln[[i]])
+dge <- DGEList(count.all, group=grp)
+#filter
+keep<- rowSums(cpm(dge) > 1) >= (length(grp)/2)
+dge <- dge[keep,]
+dge <- calcNormFactors(dge)
+dge <- estimateCommonDisp(dge)
+#diff from de.edgeR NOT dge <- estimateTrendedDisp(dge)
+#because estimateTrendedDisp cause error in exactTest
+dge <- estimateTagwiseDisp(dge)
+et <- exactTest(dge, pair=c("ctrl","hfat"))
+#anno for dge/et
+aln.re4<-aln.re3[keep]
+#anno for et2
+aln.re4[which(et$table$PValue<0.05)]->aln.re5
+#et2 = result list
+et2<-et[which(et$table$PValue<0.05),]$table
+et2<-cbind(et2,countOverlaps(aln.re5,gene.anno))
+et2<-cbind(et2,countOverlaps(aln.re5,miRNA.anno))
+et2<-cbind(et2,countOverlaps(aln.re5,piRNA.anno))
+et2<-cbind(et2,countOverlaps(aln.re5,tRNA))
+et2<-cbind(et2,countOverlaps(aln.re5,trf))
+et2<-cbind(et2,countOverlaps(aln.re5,repeatmask))
+et2<-cbind(et2,countOverlaps(aln.re5,intron))
+et2<-cbind(et2,rowSums(et2[,4:10]))
+et2<-cbind(et2,width(aln.re5))
+count.all2<-count.all[keep,]
+paste(grp,sapply(strsplit(bamFls,"\\//"),tail,1),sep=".")->colnames(count.all2)
+count.all2<-count.all2[,order(colnames(count.all2))]
+
+et2<-cbind(et2,count.all2[which(et$table$PValue<0.05),])
+write.csv(et2,"sRNA_hfat_vs_ctrl.csv")
+
 
 library(rtracklayer)
 library(BSgenome.Rnorvegicus.UCSC.rn4)
@@ -43,13 +91,13 @@ filters(hub) <- list(Species="Rattus norvegicus")
 tRNA<-hub$goldenpath.rn4.database.tRNAs_0.0.1.RData
 # tRNA.count<- summarizeOverlaps(tRNA,BamFileList(bamFls, index=character()))
 
-#miRNA ID as rowname
-elementMetadata(miRNA.anno)[,5]->rownames(data$counts$rno2.gff3)
 #phenotype 
 pd<-read.table(file="./expSpec.txt",sep="\t",header=T,stringsAsFactors=F)
 #check the order, should be same as .bam file input
 pd<-pd[c(1,8,2:7,9,18,10:17),]
 #miRNA DE
+#miRNA ID as rowname
+elementMetadata(miRNA.anno)[,5]->rownames(data$counts$rno2.gff3)
 count.miRNA<-data$counts$rno2.gff3[which(elementMetadata(miRNA.anno)[,2]=="miRNA"),]
 f0.miRNA<-de.edgeR(count.miRNA,grp,"f0.miRNA.hfatvsctrl","ctrl","hfat",F,T)
 #get the sequence
@@ -290,7 +338,7 @@ de.edgeR.pi<-function (counts,group,output,conA,conB,Tagwise=T,filter=T) {
   if (Tagwise==T) dge <- estimateTagwiseDisp(dge) else   dge <- estimateTrendedDisp(dge)
   
   et <- exactTest(dge, pair=c(conA,conB))
-  npvalue<-length(which(et$table$PValue<0.05))
+  npvalue<-length(which(et$table$PValue<0.01))
   
   tt<-topTags(et,n=npvalue)
   

@@ -1,8 +1,14 @@
 library(BSgenome.Rnorvegicus.UCSC.rn4)
 readDNAStringSet("rat_srna.fasta","fasta")->rat.srna
 runAnalysis1(rat.srna, outfile="rat_srna_hit.txt")
-
+read.table("rat_srna_hit.txt",header=T,sep="\t",stringsAsFactors=F)->hits1
 GRanges(seqnames=hits1[,1],ranges=IRanges(start=hits1[,2],end=hits1[,3]),strand=hits1[,4],ID=hits1[,5])->ctrl.sRNA
+
+count.sRNA<-matrix(0,66,18)
+for (i in 1:18) count.sRNA[,i]<- countOverlaps(ctrl.sRNA, aln[[i]])
+colnames(count.sRNA)<-colnames(count.tiRNA)
+rownames(count.sRNA) <- elementMetadata(ctrl.sRNA)[,1]
+
 count.gene<-data$counts$rn4.gtf
 rownames(count.gene) <- paste(elementMetadata(gene.anno)[,8],elementMetadata(gene.anno)[,9],elementMetadata(gene.anno)[,6],sep=";")
 count.snRNA<-count.gene[grep("snRNA",row.names(count.gene)),]
@@ -13,9 +19,10 @@ library(edgeR)
   counts=counts[,which(group %in% c(conA,conB))]
   counts<-count.snRNA
   counts<-count.miRNA
-  group=factor(group[which(group %in% c(conA,conB))])
+
+group=factor(group[which(group %in% c(conA,conB))])
   
-  dge <- DGEList(counts, group=group)
+  dge <- DGEList(counts, group=grp)
   
   #filter, as least expressed in half the libraries
     keep<- rowSums(cpm(dge) > 10) >= (length(group)/2)
@@ -35,12 +42,16 @@ library(edgeR)
 f0.sn.var[which(f0.sn.var[,2]>median(f0.sn.var[,2]) & f0.sn.var[,3]>median(f0.sn.var[,3]) & f0.sn.var[,4]<median(f0.sn.var[,4]) ),]
   var.dge->f0.sn.var
   
+4.5SRNA
+HY1
 
   var.dge->f0.mi.var
 f0.mi.var[which(f0.mi.var[,2]>5 & f0.mi.var[,3]>0.7 & f0.mi.var[,4]<5 ),]
   
  dge <- DGEList(count.miRNA, group=grp)
 dge <- DGEList(count.snRNA, group=grp)
+dge <- DGEList(count.sRNA, group=grp)
+
 keep<- rowSums(cpm(dge) > 10) >= (length(grp)/2)
 dge <- dge[keep,]
 dge <- calcNormFactors(dge)
@@ -53,6 +64,7 @@ apply(lrt$fitted.values,1,sd)->sd.dge
 cbind(lrt$table,sd.dge)->var.dge
 var.dge->f1.mi.var
 var.dge->f1.sn.var
+var.dge->f1.s.var
 
 f1.mi.var[which(f1.mi.var[,2]>median(f1.mi.var[,2]) & f1.mi.var[,4]>median(f1.mi.var[,4]) & f1.mi.var[,5]<median(f1.mi.var[,5]) ),]
 
@@ -73,6 +85,14 @@ intersect(  row.names(    f1.sn.var[which(f1.sn.var[,2]>median(f1.sn.var[,2])
                                       & f0.sn.var[,4]<median(f0.sn.var[,4])
                                       
             ),])) -> idlist
+
+intersect(  row.names(    f1.s.var[which(f1.s.var[,2]>median(f1.s.var[,2])
+                                          & f1.s.var[,5]<mean(f1.s.var[,5])     
+),] ),
+            row.names(f0.s.var[which(f0.s.var[,2]>median(f0.s.var[,2])
+                                      & f0.s.var[,4]<median(f0.s.var[,4])
+                                      
+            ),]))
 
 writeHits <- function(seqname, matches, strand, file="", append=FALSE)
 {
